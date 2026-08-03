@@ -1,0 +1,106 @@
+name: momo 限時搶購自動監控
+
+on:
+  schedule:
+    # 時間為 UTC，台灣是 UTC+8，所以要減 8 小時
+    # 00:00 檔 OPEN  → UTC 16:01 前一天
+    - cron: '1 16 * * *'
+    # 00:00 檔 CLOSE → UTC 22:49 前一天
+    - cron: '49 22 * * *'
+    # 07:00 檔 OPEN  → UTC 23:01 前一天
+    - cron: '1 23 * * *'
+    # 07:00 檔 CLOSE → UTC 02:49
+    - cron: '49 2 * * *'
+    # 11:00 檔 OPEN  → UTC 03:01
+    - cron: '1 3 * * *'
+    # 11:00 檔 CLOSE → UTC 05:49
+    - cron: '49 5 * * *'
+    # 14:00 檔 OPEN  → UTC 06:01
+    - cron: '1 6 * * *'
+    # 14:00 檔 CLOSE → UTC 09:49
+    - cron: '49 9 * * *'
+    # 18:00 檔 OPEN  → UTC 10:01
+    - cron: '1 10 * * *'
+    # 18:00 檔 CLOSE → UTC 13:49
+    - cron: '49 13 * * *'
+    # 22:00 檔 OPEN  → UTC 14:01
+    - cron: '1 14 * * *'
+    # 22:00 檔 CLOSE → UTC 15:49
+    - cron: '49 15 * * *'
+
+  # 也可以手動觸發（測試用）
+  workflow_dispatch:
+    inputs:
+      action:
+        description: '執行動作'
+        required: true
+        default: 'open'
+        type: choice
+        options:
+          - open
+          - close
+          - compare
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 取出程式碼
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 設定 Python 環境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安裝 Python 套件
+        run: pip install playwright
+
+      - name: 安裝 Playwright 瀏覽器核心
+        run: playwright install chromium --with-deps
+
+      - name: 建立 snapshots 資料夾
+        run: mkdir -p snapshots
+
+      - name: 判斷執行動作（自動排程）
+        if: github.event_name == 'schedule'
+        run: |
+          # 取得目前 UTC 時間的小時和分鐘
+          HOUR=$(date -u +%H)
+          MIN=$(date -u +%M)
+          echo "UTC 時間：$HOUR:$MIN"
+
+          # 判斷要執行 open、close 還是 compare
+          if [ "$MIN" = "01" ]; then
+            echo "ACTION=open" >> $GITHUB_ENV
+          elif [ "$MIN" = "49" ]; then
+            echo "ACTION=close" >> $GITHUB_ENV
+          elif [ "$MIN" = "51" ]; then
+            echo "ACTION=compare" >> $GITHUB_ENV
+          fi
+
+      - name: 判斷執行動作（手動觸發）
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "ACTION=${{ github.event.inputs.action }}" >> $GITHUB_ENV
+
+      - name: 執行抓取或計算
+        run: |
+          echo "執行動作：$ACTION"
+          if [ "$ACTION" = "open" ]; then
+            python momo_scraper.py open
+          elif [ "$ACTION" = "close" ]; then
+            python momo_scraper.py close
+          elif [ "$ACTION" = "compare" ]; then
+            python compare_snapshots.py
+          fi
+
+      - name: 把 CSV 結果存回 GitHub
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add snapshots/
+          git diff --staged --quiet || git commit -m "自動更新：$(date +'%Y/%m/%d %H:%M') $ACTION"
+          git push
