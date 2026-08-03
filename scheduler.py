@@ -75,7 +75,9 @@ def run_scraper(snap_type: str):
     log(f"▶ 執行抓取：{snap_type.upper()}")
     result = subprocess.run(
         [sys.executable, scraper, snap_type],
-        capture_output=True, text=True, encoding="utf-8"
+        capture_output=True, text=True,
+        encoding=sys.stdout.encoding or "utf-8",
+        errors="replace"
     )
     if result.stdout:
         for line in result.stdout.strip().split("\n"):
@@ -90,7 +92,9 @@ def run_compare():
     log("▶ 計算成效報告...")
     result = subprocess.run(
         [sys.executable, compare],
-        capture_output=True, text=True, encoding="utf-8"
+        capture_output=True, text=True,
+        encoding=sys.stdout.encoding or "utf-8",
+        errors="replace"
     )
     if result.stdout:
         for line in result.stdout.strip().split("\n"):
