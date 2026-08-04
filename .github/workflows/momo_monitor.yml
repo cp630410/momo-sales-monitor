@@ -2,31 +2,24 @@ name: momo 限時搶購自動監控
 
 on:
   schedule:
-    # UTC 時間（台灣 UTC+8，需減 8 小時）
-    # 00:00 檔 OPEN  → UTC 16:01
-    - cron: '1 16 * * *'
-    # 00:00 檔 CLOSE → UTC 22:49
-    - cron: '49 22 * * *'
-    # 07:00 檔 OPEN  → UTC 23:01
-    - cron: '1 23 * * *'
-    # 07:00 檔 CLOSE → UTC 02:49
-    - cron: '49 2 * * *'
-    # 11:00 檔 OPEN  → UTC 03:01
-    - cron: '1 3 * * *'
-    # 11:00 檔 CLOSE → UTC 05:49
-    - cron: '49 5 * * *'
-    # 14:00 檔 OPEN  → UTC 06:01
-    - cron: '1 6 * * *'
-    # 14:00 檔 CLOSE → UTC 09:49
-    - cron: '49 9 * * *'
-    # 18:00 檔 OPEN  → UTC 10:01
-    - cron: '1 10 * * *'
-    # 18:00 檔 CLOSE → UTC 13:49
-    - cron: '49 13 * * *'
-    # 22:00 檔 OPEN  → UTC 14:01
-    - cron: '1 14 * * *'
-    # 22:00 檔 CLOSE → UTC 15:49
-    - cron: '49 15 * * *'
+    # ── 每日六個時段（UTC，台灣 = UTC+8）──────────────
+    - cron: '1 16 * * *'   # 00:00 OPEN  （台灣 00:01）
+    - cron: '49 22 * * *'  # 00:00 CLOSE （台灣 06:49）
+    - cron: '1 23 * * *'   # 07:00 OPEN  （台灣 07:01）
+    - cron: '49 2 * * *'   # 07:00 CLOSE （台灣 10:49）
+    - cron: '1 3 * * *'    # 11:00 OPEN  （台灣 11:01）
+    - cron: '49 5 * * *'   # 11:00 CLOSE （台灣 13:49）
+    - cron: '1 6 * * *'    # 14:00 OPEN  （台灣 14:01）
+    - cron: '49 9 * * *'   # 14:00 CLOSE （台灣 17:49）
+    - cron: '1 10 * * *'   # 18:00 OPEN  （台灣 18:01）
+    - cron: '49 13 * * *'  # 18:00 CLOSE （台灣 21:49）
+    - cron: '1 14 * * *'   # 22:00 OPEN  （台灣 22:01）
+    - cron: '49 15 * * *'  # 22:00 CLOSE （台灣 23:49）
+
+    # ── 每月清理：第二週週日 02:00 台灣時間 ────────────
+    # UTC 18:00（前一天）= 台灣 02:00
+    # 每月 8~14 日之間的週日（= 第二週週日）
+    - cron: '0 18 8-14 * 0'
 
   workflow_dispatch:
     inputs:
@@ -38,6 +31,7 @@ on:
         options:
           - open
           - close
+          - cleanup
 
 jobs:
   scrape:
@@ -67,23 +61,39 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "ACTION=${{ github.event.inputs.action }}" >> $GITHUB_ENV
-          else
+
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
             MIN=$(date -u +%M)
-            if [ "$MIN" = "01" ]; then
+            DAY=$(date -u +%d)
+            DOW=$(date -u +%u)  # 1=Mon, 7=Sun
+
+            # 第二週週日（8~14日 且 週日）→ cleanup
+            if [ "$DOW" = "7" ] && [ "$DAY" -ge 8 ] && [ "$DAY" -le 14 ]; then
+              echo "ACTION=cleanup" >> $GITHUB_ENV
+            elif [ "$MIN" = "01" ]; then
               echo "ACTION=open" >> $GITHUB_ENV
-            else
+            elif [ "$MIN" = "49" ]; then
               echo "ACTION=close" >> $GITHUB_ENV
+            else
+              echo "ACTION=open" >> $GITHUB_ENV
             fi
           fi
 
-      - name: 執行抓取
-        run: |
-          echo "執行動作：$ACTION"
-          python momo_scraper.py $ACTION
+      - name: 執行抓取（open）
+        if: env.ACTION == 'open'
+        run: python momo_scraper.py open
 
-      - name: 若是 close 則自動計算成效
+      - name: 執行抓取（close）
+        if: env.ACTION == 'close'
+        run: python momo_scraper.py close
+
+      - name: close 完成後自動計算成效
         if: env.ACTION == 'close'
         run: python compare_snapshots.py
+
+      - name: 每月清理上個月快照
+        if: env.ACTION == 'cleanup'
+        run: python cleanup.py
 
       - name: 把結果存回 GitHub
         run: |

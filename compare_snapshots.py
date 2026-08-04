@@ -1,25 +1,38 @@
 # -*- coding: utf-8 -*-
 """
-momo 限時搶購 - 成效計算程式 v3
+momo 限時搶購 - 成效計算程式 v4
+
 修正內容：
-  - 改為累積模式：結果追加到 all_results.csv，不產生獨立檔案
-  - 修正售完判斷：組數歸零也算售完
+  - 改為同日期同時段配對，不再用「最新 open + 最新 close」
+  - 避免多個 open/close 造成配對錯亂
+  - 結果追加到 all_results.csv
 
 執行方式：
-  python compare_snapshots.py
-  python compare_snapshots.py <open.csv> <close.csv>
+  python compare_snapshots.py                          # 自動配對最新時段
+  python compare_snapshots.py <open.csv> <close.csv>   # 手動指定
 """
 
 import csv
 import os
 import sys
+import re
 from datetime import datetime
 from glob import glob
 
-OUTPUT_DIR   = "snapshots"
-ALL_RESULTS  = os.path.join(OUTPUT_DIR, "all_results.csv")
-FIELDNAMES   = ["date","slot","icode","brand","name","discount","price",
-                "qty_open","qty_close","sold","sold_out","sell_rate"]
+OUTPUT_DIR  = "snapshots"
+ALL_RESULTS = os.path.join(OUTPUT_DIR, "all_results.csv")
+FIELDNAMES  = ["date","slot","icode","brand","name","discount","price",
+               "qty_open","qty_close","sold","sold_out","sell_rate"]
+
+# momo 六個時段
+SLOT_LABELS = {
+    "0000": "00:00",
+    "0700": "07:00",
+    "1100": "11:00",
+    "1400": "14:00",
+    "1800": "18:00",
+    "2200": "22:00",
+}
 
 
 def load_snapshot(filepath: str) -> dict:
@@ -30,26 +43,41 @@ def load_snapshot(filepath: str) -> dict:
     return data
 
 
-def parse_slot_from_filename(filepath: str) -> str:
-    """從檔名抓時段，例如 momo_20260803_0700_result → 07:00"""
-    base = os.path.basename(filepath)
-    parts = base.split("_")
-    if len(parts) >= 3:
-        t = parts[2]
-        return f"{t[:2]}:{t[2:]}"
-    return "??"
+def parse_file_info(filepath: str):
+    """從檔名取得日期和時段，例如 momo_20260804_1100_open.csv → (20260804, 1100)"""
+    base  = os.path.basename(filepath)
+    m     = re.match(r"momo_(\d{8})_(\d{4})_(open|close)\.csv", base)
+    if m:
+        return m.group(1), m.group(2)
+    return None, None
+
+
+def find_latest_pair():
+    """找最新的同日期同時段 open + close 配對"""
+    closes = sorted(glob(os.path.join(OUTPUT_DIR, "*_close.csv")), reverse=True)
+
+    for close_file in closes:
+        date_str, slot = parse_file_info(close_file)
+        if not date_str:
+            continue
+        # 找同日期同時段的 open
+        open_file = os.path.join(OUTPUT_DIR, f"momo_{date_str}_{slot}_open.csv")
+        if os.path.exists(open_file):
+            return open_file, close_file
+
+    return None, None
 
 
 def compare(open_file: str, close_file: str) -> list:
     snap_open  = load_snapshot(open_file)
     snap_close = load_snapshot(close_file)
-    results = []
+    results    = []
 
     for icode, s in snap_open.items():
         qty_start = int(s["qty"]) if s.get("qty") else None
 
         if icode in snap_close:
-            qty_raw  = snap_close[icode].get("qty", "")
+            qty_raw  = snap_close[icode].get("qty","")
             qty_end  = int(qty_raw) if qty_raw and qty_raw.strip() else 0
             sold_out = (qty_end == 0)
         else:
@@ -60,27 +88,42 @@ def compare(open_file: str, close_file: str) -> list:
         rate = round(sold / qty_start * 100, 1) if (sold is not None and qty_start) else 0.0
 
         results.append({
-            "icode":    icode,
-            "brand":    s.get("brand", ""),
-            "name":     s.get("name", ""),
-            "discount": s.get("discount", ""),
-            "price":    s.get("price", ""),
-            "qty_open": qty_start,
-            "qty_close":qty_end,
-            "sold":     sold,
-            "sold_out": "是" if sold_out else "否",
-            "sell_rate":rate,
+            "icode":     icode,
+            "brand":     s.get("brand",""),
+            "name":      s.get("name",""),
+            "discount":  s.get("discount",""),
+            "price":     s.get("price",""),
+            "qty_open":  qty_start,
+            "qty_close": qty_end,
+            "sold":      sold,
+            "sold_out":  "是" if sold_out else "否",
+            "sell_rate": rate,
         })
 
     results.sort(key=lambda r: -(r["sold"] or 0))
     return results
 
 
-def append_to_all_results(results: list, date_str: str, slot_str: str):
-    """把結果追加到 all_results.csv（不存在則建立）"""
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    file_exists = os.path.exists(ALL_RESULTS)
+def already_recorded(date_str: str, slot_str: str) -> bool:
+    """檢查這個日期+時段是否已經寫入過 all_results.csv，避免重複"""
+    if not os.path.exists(ALL_RESULTS):
+        return False
+    with open(ALL_RESULTS, encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            if row.get("date") == date_str and row.get("slot") == slot_str:
+                return True
+    return False
 
+
+def append_to_all_results(results: list, date_str: str, slot_str: str):
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    # 防止重複寫入
+    if already_recorded(date_str, slot_str):
+        print(f"⚠️ {date_str} {slot_str} 已記錄過，跳過寫入")
+        return
+
+    file_exists = os.path.exists(ALL_RESULTS)
     with open(ALL_RESULTS, "a", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
         if not file_exists:
@@ -100,19 +143,8 @@ def append_to_all_results(results: list, date_str: str, slot_str: str):
                 "sold_out":  r["sold_out"],
                 "sell_rate": r["sell_rate"],
             })
+
     print(f"✅ 已追加 {len(results)} 筆 → {ALL_RESULTS}")
-
-
-def find_latest_pair():
-    opens  = sorted(glob(os.path.join(OUTPUT_DIR, "*_open.csv")))
-    closes = sorted(glob(os.path.join(OUTPUT_DIR, "*_close.csv")))
-    if not opens or not closes:
-        return None, None
-    latest_open = opens[-1]
-    matching_close = latest_open.replace("_open.csv", "_close.csv")
-    if os.path.exists(matching_close):
-        return latest_open, matching_close
-    return latest_open, closes[-1]
 
 
 if __name__ == "__main__":
@@ -121,27 +153,24 @@ if __name__ == "__main__":
     else:
         open_file, close_file = find_latest_pair()
         if not open_file:
-            print("❌ 找不到快照檔案")
+            print("❌ 找不到同日期同時段的 open + close 配對")
             sys.exit(1)
         print(f"自動配對：\n  開檔：{open_file}\n  結束前：{close_file}")
 
+    date_str, slot_code = parse_file_info(open_file)
+    slot_label = SLOT_LABELS.get(slot_code, slot_code)
+    display_date = f"{date_str[:4]}/{date_str[4:6]}/{date_str[6:]}"
+
     results = compare(open_file, close_file)
-
-    # 從檔名取得日期和時段
-    base     = os.path.basename(open_file)
-    parts    = base.split("_")
-    date_str = f"{parts[1][:4]}/{parts[1][4:6]}/{parts[1][6:]}" if len(parts) > 1 else datetime.now().strftime("%Y/%m/%d")
-    slot_str = parse_slot_from_filename(open_file)
-
-    append_to_all_results(results, date_str, slot_str)
+    append_to_all_results(results, display_date, slot_label)
 
     # 印出摘要
-    sold_any  = [r for r in results if r["sold"] and r["sold"] > 0]
-    sold_out  = [r for r in results if r["sold_out"] == "是"]
-    print(f"\n{'商品名稱':<24} {'折扣':>5} {'開檔':>6} {'結束':>6} {'售出':>6} {'售出率':>7} {'售完':>5}")
-    print("─" * 65)
+    sold_any = [r for r in results if r["sold"] and r["sold"] > 0]
+    sold_out = [r for r in results if r["sold_out"] == "是"]
+    print(f"\n{'商品名稱':<22} {'折扣':>5} {'開檔':>6} {'結束':>6} {'售出':>6} {'售出率':>7} {'售完':>5}")
+    print("─" * 60)
     for r in results:
-        print(f"{r['name'][:22]:<24} {r['discount']:>5} "
+        print(f"{r['name'][:20]:<22} {r['discount']:>5} "
               f"{str(r['qty_open']):>6} {str(r['qty_close']):>6} "
               f"{str(r['sold'] or '-'):>6} {str(r['sell_rate'])+'%':>7} {r['sold_out']:>5}")
     print(f"\n總商品：{len(results)} ｜ 有銷售：{len(sold_any)} ｜ 售完：{len(sold_out)}")
