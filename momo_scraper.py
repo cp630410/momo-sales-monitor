@@ -19,8 +19,11 @@ import re
 import sys
 import csv
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright
+
+# 固定使用台灣時間（UTC+8），不管在哪裡執行都正確
+TW_TZ = timezone(timedelta(hours=8))
 
 MOMO_URL    = "https://www.momoshop.com.tw/edm/cmmedm.jsp?lpn=O1K5FBOqsvN&n=1"
 OUTPUT_DIR  = "snapshots"
@@ -38,7 +41,7 @@ SLOTS = [
 
 def get_current_slot() -> str:
     """依台灣當前時間判斷所在時段，回傳 HHMM 字串"""
-    now_hour = datetime.now().hour
+    now_hour = datetime.now(TW_TZ).hour
     for start, end, slot in SLOTS:
         if start <= now_hour < end:
             return slot
@@ -72,7 +75,7 @@ def scrape_current_slot(headless: bool = True):
         time_el = page.query_selector("#posTag1 .time")
         slot_info["time_text"] = time_el.inner_text().strip() if time_el else ""
 
-        scraped_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        scraped_at = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
         items = page.query_selector_all("#posTag1 li.box1")
         print(f"  找到 {len(items)} 個商品（posTag1 當前時段）")
 
@@ -127,7 +130,7 @@ def _clean_price(text: str):
 
 def save_snapshot(products: list, snap_type: str, slot_info: dict):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    now      = datetime.now()
+    now      = datetime.now(TW_TZ)
     date_str = now.strftime("%Y%m%d")
     slot     = get_current_slot()
 

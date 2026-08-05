@@ -16,8 +16,10 @@ import csv
 import os
 import sys
 import re
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from glob import glob
+
+TW_TZ = timezone(timedelta(hours=8))
 
 OUTPUT_DIR  = "snapshots"
 ALL_RESULTS = os.path.join(OUTPUT_DIR, "all_results.csv")
