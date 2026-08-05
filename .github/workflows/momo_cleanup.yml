@@ -1,0 +1,40 @@
+name: momo 每月清理
+
+on:
+  schedule:
+    # 每月第二週週日 台灣時間 02:00 = UTC 18:00
+    - cron: '0 18 8-14 * 0'
+
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 取出程式碼
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 設定 Python 環境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 建立 snapshots 資料夾
+        run: mkdir -p snapshots
+
+      - name: 執行每月清理
+        run: python cleanup.py
+
+      - name: 存回 GitHub
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add snapshots/
+          git stash
+          git pull --rebase
+          git stash pop
+          git add snapshots/
+          git diff --staged --quiet || git commit -m "每月清理：$(date +'%Y/%m/%d %H:%M')"
+          git push
