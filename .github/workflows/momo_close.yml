@@ -1,20 +1,21 @@
-name: momo 結束快照與成效計算
+name: momo 限時搶購監控
 
 on:
   schedule:
     # UTC 時間（台灣 = UTC+8）
-    # close 設定為結束前 15 分鐘
-    - cron: '45 22 * * *'  # 00:00 CLOSE → 台灣 06:45（06:59 結束前15分）
-    - cron: '45 2 * * *'   # 07:00 CLOSE → 台灣 10:45（10:59 結束前15分）
-    - cron: '45 5 * * *'   # 11:00 CLOSE → 台灣 13:45（13:59 結束前15分）
-    - cron: '45 9 * * *'   # 14:00 CLOSE → 台灣 17:45（17:59 結束前15分）
-    - cron: '45 13 * * *'  # 18:00 CLOSE → 台灣 21:45（21:59 結束前15分）
-    - cron: '45 15 * * *'  # 22:00 CLOSE → 台灣 23:45（23:59 結束前15分）
+    # 每個時段結束前 15 分鐘執行
+    # 同時完成：當前時段 CLOSE + 下一時段 OPEN + 成效計算
+    - cron: '45 22 * * *'  # 台灣 06:45（00:00 檔結束前15分）
+    - cron: '45 2 * * *'   # 台灣 10:45（07:00 檔結束前15分）
+    - cron: '45 5 * * *'   # 台灣 13:45（11:00 檔結束前15分）
+    - cron: '45 9 * * *'   # 台灣 17:45（14:00 檔結束前15分）
+    - cron: '45 13 * * *'  # 台灣 21:45（18:00 檔結束前15分）
+    - cron: '45 15 * * *'  # 台灣 23:45（22:00 檔結束前15分）
 
   workflow_dispatch:
 
 jobs:
-  close:
+  monitor:
     runs-on: ubuntu-latest
     steps:
       - name: 取出程式碼
@@ -36,10 +37,10 @@ jobs:
       - name: 建立 snapshots 資料夾
         run: mkdir -p snapshots
 
-      - name: 執行結束前快照
-        run: python momo_scraper.py close
+      - name: 抓取（當前時段 CLOSE + 下一時段 OPEN）
+        run: python momo_scraper.py
 
-      - name: 自動計算成效
+      - name: 計算當前時段成效
         run: python compare_snapshots.py
 
       - name: 存回 GitHub
@@ -48,5 +49,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add snapshots/
           git pull --rebase --autostash
-          git diff --staged --quiet || git commit -m "自動更新：$(date +'%Y/%m/%d %H:%M') close"
+          git diff --staged --quiet || git commit -m "自動更新：$(date +'%Y/%m/%d %H:%M')"
           git push
