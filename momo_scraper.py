@@ -1,16 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-momo 限時搶購 - 商品資料抓取程式 v5
+momo 限時搶購 - 商品資料抓取程式 v6
 
 設計邏輯：
   一次開啟頁面，同時抓取兩筆資料：
-  1. posTag1（當前時段）→ CLOSE 快照
+  1. 第1個 .MENTAL div（當前時段）→ CLOSE 快照
   2. 第2個 .MENTAL div（下一時段）→ OPEN 快照
+
+v6 修正說明（2026-08-06）：
+  - 原本 CLOSE 依賴 #posTag1 這個 id 抓取，但 momo 網頁已改版，
+    該 id 已不存在，導致 CLOSE 持續抓到 0 個商品。
+  - 診斷確認：.MENTAL 區塊本身已依時段順序排列，
+    第1個 = 當前時段，第2個 = 下一時段，
+    因此改為直接用 mentals[0] / mentals[1]，不再依賴 posTag1。
 
 優點：
   - 一次網頁載入，兩筆資料
   - 順序 100% 保證（先 close 後 open，同一次執行）
   - 減少 GitHub Actions 執行次數
+  - 不再依賴可能失效的 id，只依賴穩定的 class 結構
 
 執行方式：
   python momo_scraper.py
@@ -147,23 +155,31 @@ def run():
             print("  ⚠️ 等待頁面逾時，繼續嘗試...")
         page.wait_for_timeout(3000)
 
-        # ── CLOSE：抓當前時段 posTag1 ──
-        time_el_cur  = page.query_selector("#posTag1 .time")
-        time_text_cur = time_el_cur.inner_text().strip() if time_el_cur else ""
-        items_close  = page.query_selector_all("#posTag1 li.box1")
-        products_close = parse_items(items_close, scraped_at)
-
-        # ── OPEN：抓下一時段（第2個 .MENTAL div）──
+        # 一次抓取所有 .MENTAL 區塊（依時段順序排列：第1個=當前，第2個=下一）
         mentals = page.query_selector_all("#CustExclbuy div.MENTAL")
+
+        # ── CLOSE：抓當前時段（第1個 .MENTAL）──
+        if len(mentals) >= 1:
+            cur_div       = mentals[0]
+            time_el_cur   = cur_div.query_selector(".time")
+            time_text_cur = time_el_cur.inner_text().strip() if time_el_cur else ""
+            items_close   = cur_div.query_selector_all("li.box1")
+            products_close = parse_items(items_close, scraped_at)
+        else:
+            print("  ⚠️ 找不到當前時段區塊")
+            products_close = []
+            time_text_cur  = ""
+
+        # ── OPEN：抓下一時段（第2個 .MENTAL）──
         if len(mentals) >= 2:
-            next_div     = mentals[1]
-            time_el_next = next_div.query_selector(".time")
+            next_div       = mentals[1]
+            time_el_next   = next_div.query_selector(".time")
             time_text_next = time_el_next.inner_text().strip() if time_el_next else ""
-            items_open   = next_div.query_selector_all("li.box1")
-            products_open = parse_items(items_open, scraped_at)
+            items_open     = next_div.query_selector_all("li.box1")
+            products_open  = parse_items(items_open, scraped_at)
         else:
             print("  ⚠️ 找不到下一時段區塊")
-            products_open = []
+            products_open  = []
             time_text_next = ""
 
         browser.close()
