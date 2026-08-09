@@ -176,7 +176,7 @@ tbody td{padding:9px 14px;vertical-align:middle;}
             <tr>
               <th>#</th><th>商品名稱</th><th>時段</th>
               <th>折扣</th><th>活動價</th>
-              <th>開檔</th><th>結束前</th><th>售出</th><th>售出率</th><th>狀態</th>
+              <th>開檔</th><th>中段</th><th>結束前</th><th>售出</th><th>售出率</th><th>狀態</th>
             </tr>
           </thead>
           <tbody id="resultTable"></tbody>
@@ -337,6 +337,7 @@ function renderTable(data) {
     const isSoldOut = r.sold_out === '是';
     const barColor = rate >= 30 ? 'var(--red)' : rate >= 10 ? 'var(--orange)' : rate > 0 ? 'var(--blue)' : 'var(--border2)';
     const barW = Math.min(rate, 100);
+    const midDisplay = (r.mid_qty !== undefined && r.mid_qty !== '') ? r.mid_qty : '-';
     return `<tr>
       <td style="color:var(--text-dim);font-family:'DM Mono',monospace;font-size:11px">${i+1}</td>
       <td><div class="prod-name">${r.name}</div><div class="prod-brand">${r.brand}</div></td>
@@ -344,13 +345,14 @@ function renderTable(data) {
       <td><span class="disc-badge">${r.discount}</span></td>
       <td style="font-family:'DM Mono',monospace">$${r.price}</td>
       <td class="qty">${r.qty_open}</td>
+      <td class="qty">${midDisplay}</td>
       <td class="qty">${r.qty_close}</td>
       <td><span class="sold-num ${sold===0?'zero':''}" style="color:${sold>0?'var(--blue)':'var(--text-dim)'}">${sold||'-'}</span></td>
       <td><div class="rate-wrap"><div class="rate-track"><div class="rate-fill" style="width:${barW}%;background:${barColor}"></div></div><div style="font-size:11px;font-family:'DM Mono',monospace;min-width:38px;color:${barColor}">${rate}%</div></div></td>
       <td>${isSoldOut?'<span class="sold-out-tag">🔥 售完</span>':''}</td>
     </tr>`;
   }).join('');
-  document.getElementById('resultTable').innerHTML = rows || '<tr><td colspan="10" style="text-align:center;color:var(--text-dim);padding:30px">此日期/時段無資料</td></tr>';
+  document.getElementById('resultTable').innerHTML = rows || '<tr><td colspan="11" style="text-align:center;color:var(--text-dim);padding:30px">此日期/時段無資料</td></tr>';
 }
 
 function renderDist(data) {
