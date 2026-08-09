@@ -1,4 +1,4 @@
-﻿date,slot,icode,brand,name,discount,price,qty_open,qty_close,sold,sold_out,sell_rate
+date,slot,icode,brand,name,discount,price,qty_open,mid_qty,qty_close,sold,sold_out,sell_rate
 2026/08/06,18:00,12914214,NIKE 耐吉,精選男女運動服飾 健身 背心 短袖 短褲 (多款任選),51折,450,381,196,185,否,48.6
 2026/08/06,18:00,15039734,王品集團,西堤牛排經典套餐,94折,729,450,292,158,否,35.1
 2026/08/06,18:00,8037995,倍潔雅,花漾柔感150抽x84包,5折,849,500,356,144,否,28.8
