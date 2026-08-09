@@ -1,29 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-momo 限時搶購 - 商品資料抓取程式 v8
+momo 限時搶購 - 商品資料抓取程式 v7
 
-v8 修正內容（2026-08-08）：
-  1. page.goto 逾時導致整支程式崩潰的問題：
-     - 開檔瞬間（0000/0700/1100/1400/1800/2200）是全站流量尖峰，
-       momo 網站反應變慢，原本 30 秒逾時就直接丟出例外、程式中斷，
-       導致當次 open 快照完全沒有產生。
-     - 改為加上重試機制：最多重試 2 次，每次間隔 5 秒，
-       並將逾時時間從 30 秒拉長到 45 秒，大幅降低尖峰時段整支
-       程式崩潰的機率。
+設計邏輯（v7 全新架構）：
+  改為單次抓取模式，每次執行只抓「當前時段」一筆資料，
+  由外部（crontab）在同一時段內呼叫三次，分別帶入不同的
+  checkpoint 參數，代表抓取的時間點：
+    open  → 時段開檔（時段開始時）
+    mid   → 時段中點（時段開始後 1/2 時間）
+    close → 時段結束前 5 分鐘
 
-  2. 跨午夜日期錯位的問題：
-     - 原本日期字串（date_str）是在 save_csv() 存檔那一刻才重新
-       讀取「現在時間」計算，如果抓取過程因為等待逾時、重試等
-       原因拖到跨過午夜 00:00，日期會被記錄成隔天，導致同一時段
-       的 open/mid/close 三個檔案日期對不上，配對失敗。
-     - 改為在 run() 一開始就固定好日期字串，整個流程（含存檔）
-       都使用同一個時間戳記，不會再受抓取耗時影響。
+  這樣可以在同一時段內觀察開檔→中段→結束的庫存變化趨勢，
+  也能看出是否有中途加碼（結束庫存 > 中段或開檔庫存）的狀況。
 
-沿用先前版本邏輯：
-  - 每次執行只抓「當前時段」一筆資料，checkpoint 參數決定
-    這次是 open（開檔）/ mid（時段中點）/ close（結束前5分）
-  - CLOSE 抓取邏輯：直接用 .MENTAL 區塊第1個（mentals[0]）
-    作為當前時段，不依賴已失效的 #posTag1
+v7 修正/簡化說明：
+  - 移除舊版「一次抓當前+下一時段」的複合邏輯，因為現在
+    每個時段會在自己開始時被獨立呼叫 open checkpoint，
+    不需要再靠「上一時段結束前」順便偷抓下一時段。
+  - CLOSE 抓取邏輯延續 v6 修正：直接用 .MENTAL 區塊的
+    第1個（mentals[0]）作為當前時段，不依賴已失效的 #posTag1。
 
 執行方式：
   python momo_scraper.py open
@@ -43,10 +38,6 @@ MOMO_URL   = "https://www.momoshop.com.tw/edm/cmmedm.jsp?lpn=O1K5FBOqsvN&n=1"
 OUTPUT_DIR = "snapshots"
 
 VALID_CHECKPOINTS = ("open", "mid", "close")
-
-GOTO_TIMEOUT_MS = 45000   # 30000 → 45000，給尖峰時段更多緩衝
-MAX_RETRIES     = 2       # 最多重試 2 次（總共嘗試 3 次）
-RETRY_WAIT_MS   = 5000    # 每次重試前等待 5 秒
 
 SLOTS = [
     (0,  7,  "0000"),
@@ -106,8 +97,10 @@ def parse_items(items, scraped_at: str) -> list:
     return list(seen.values())
 
 
-def save_csv(products: list, date_str: str, slot_code: str, checkpoint: str, time_text: str):
+def save_csv(products: list, slot_code: str, checkpoint: str, time_text: str):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+    now      = datetime.now(TW_TZ)
+    date_str = now.strftime("%Y%m%d")
 
     filename = f"momo_{date_str}_{slot_code}_{checkpoint}.csv"
     filepath = os.path.join(OUTPUT_DIR, filename)
@@ -122,33 +115,13 @@ def save_csv(products: list, date_str: str, slot_code: str, checkpoint: str, tim
     return filepath
 
 
-def goto_with_retry(page, url: str):
-    """帶重試機制的頁面載入，應對開檔瞬間流量尖峰造成的逾時"""
-    for attempt in range(1, MAX_RETRIES + 2):  # 總共最多嘗試 MAX_RETRIES+1 次
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
-            return True
-        except Exception as e:
-            if attempt <= MAX_RETRIES:
-                print(f"  ⚠️ 第{attempt}次頁面載入失敗，{RETRY_WAIT_MS//1000}秒後重試...（{type(e).__name__}）")
-                page.wait_for_timeout(RETRY_WAIT_MS)
-            else:
-                print(f"  ❌ 頁面載入失敗，已重試{MAX_RETRIES}次仍無法載入，放棄本次抓取（{type(e).__name__}）")
-                return False
-    return False
-
-
 def run(checkpoint: str):
     now        = datetime.now(TW_TZ)
     scraped_at = now.strftime("%Y-%m-%d %H:%M:%S")
-    date_str   = now.strftime("%Y%m%d")   # ← 一開始就固定，全流程共用，避免跨午夜錯位
     cur_slot   = get_current_slot()
 
     print(f"\n🚀 開始抓取（台灣時間 {now.strftime('%H:%M')}，checkpoint={checkpoint}）")
     print(f"   當前時段：{cur_slot}")
-
-    products  = []
-    time_text = ""
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -161,31 +134,32 @@ def run(checkpoint: str):
         )
 
         print(f"  開啟頁面：{MOMO_URL}")
-        ok = goto_with_retry(page, MOMO_URL)
+        page.goto(MOMO_URL, wait_until="domcontentloaded", timeout=30000)
 
-        if ok:
-            try:
-                page.wait_for_selector("#CustExclbuy div.MENTAL", timeout=15000)
-            except Exception:
-                print("  ⚠️ 等待頁面逾時，繼續嘗試...")
-            page.wait_for_timeout(3000)
+        try:
+            page.wait_for_selector("#CustExclbuy div.MENTAL", timeout=15000)
+        except Exception:
+            print("  ⚠️ 等待頁面逾時，繼續嘗試...")
+        page.wait_for_timeout(3000)
 
-            # 抓取所有 .MENTAL 區塊，第1個（mentals[0]）即為當前時段
-            mentals = page.query_selector_all("#CustExclbuy div.MENTAL")
+        # 抓取所有 .MENTAL 區塊，第1個（mentals[0]）即為當前時段
+        mentals = page.query_selector_all("#CustExclbuy div.MENTAL")
 
-            if len(mentals) >= 1:
-                cur_div     = mentals[0]
-                time_el_cur = cur_div.query_selector(".time")
-                time_text   = time_el_cur.inner_text().strip() if time_el_cur else ""
-                items       = cur_div.query_selector_all("li.box1")
-                products    = parse_items(items, scraped_at)
-            else:
-                print("  ⚠️ 找不到當前時段區塊")
+        if len(mentals) >= 1:
+            cur_div     = mentals[0]
+            time_el_cur = cur_div.query_selector(".time")
+            time_text   = time_el_cur.inner_text().strip() if time_el_cur else ""
+            items       = cur_div.query_selector_all("li.box1")
+            products    = parse_items(items, scraped_at)
+        else:
+            print("  ⚠️ 找不到當前時段區塊")
+            products  = []
+            time_text = ""
 
         browser.close()
 
     print()
-    save_csv(products, date_str, cur_slot, checkpoint, f"  ← {time_text}")
+    save_csv(products, cur_slot, checkpoint, f"  ← {time_text}")
 
     return cur_slot
 
@@ -196,3 +170,5 @@ if __name__ == "__main__":
         print(f"❌ 無效的 checkpoint 參數：{checkpoint}（必須是 open / mid / close）")
         sys.exit(1)
     run(checkpoint)
+
+

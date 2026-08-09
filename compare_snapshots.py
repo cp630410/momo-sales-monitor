@@ -1,15 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-momo 限時搶購 - 成效計算程式 v4
+momo 限時搶購 - 成效計算程式 v5
 
-修正內容：
-  - 改為同日期同時段配對，不再用「最新 open + 最新 close」
-  - 避免多個 open/close 造成配對錯亂
-  - 結果追加到 all_results.csv
+v5 修正內容：
+  - 配合 momo_scraper.py v7 的三檢查點架構（open / mid / close），
+    改為尋找同日期同時段的 open + mid + close 三個檔案配對
+  - all_results.csv 新增 mid_qty 欄位，記錄時段中點的庫存，
+    方便觀察開檔→中段→結束的趨勢，也能看出是否中途加碼
+  - 沿用 v4 的防重複寫入機制
 
 執行方式：
-  python compare_snapshots.py                          # 自動配對最新時段
-  python compare_snapshots.py <open.csv> <close.csv>   # 手動指定
+  python compare_snapshots.py
+      → 自動配對最新時段（需同時存在 open/mid/close 三個檔案）
+  python compare_snapshots.py <open.csv> <mid.csv> <close.csv>
+      → 手動指定三個檔案
 """
 
 import csv
@@ -24,7 +28,7 @@ TW_TZ = timezone(timedelta(hours=8))
 OUTPUT_DIR  = "snapshots"
 ALL_RESULTS = os.path.join(OUTPUT_DIR, "all_results.csv")
 FIELDNAMES  = ["date","slot","icode","brand","name","discount","price",
-               "qty_open","qty_close","sold","sold_out","sell_rate"]
+               "qty_open","mid_qty","qty_close","sold","sold_out","sell_rate"]
 
 # momo 六個時段
 SLOT_LABELS = {
@@ -46,40 +50,44 @@ def load_snapshot(filepath: str) -> dict:
 
 
 def parse_file_info(filepath: str):
-    """從檔名取得日期和時段，例如 momo_20260804_1100_open.csv → (20260804, 1100)"""
-    base  = os.path.basename(filepath)
-    m     = re.match(r"momo_(\d{8})_(\d{4})_(open|close)\.csv", base)
+    """從檔名取得日期、時段、checkpoint，例如 momo_20260806_1100_mid.csv → (20260806, 1100, mid)"""
+    base = os.path.basename(filepath)
+    m    = re.match(r"momo_(\d{8})_(\d{4})_(open|mid|close)\.csv", base)
     if m:
-        return m.group(1), m.group(2)
-    return None, None
+        return m.group(1), m.group(2), m.group(3)
+    return None, None, None
 
 
-def find_latest_pair():
-    """找最新的同日期同時段 open + close 配對"""
+def find_latest_trio():
+    """找最新的同日期同時段 open + mid + close 三檔配對"""
     closes = sorted(glob(os.path.join(OUTPUT_DIR, "*_close.csv")), reverse=True)
 
     for close_file in closes:
-        date_str, slot = parse_file_info(close_file)
+        date_str, slot, _ = parse_file_info(close_file)
         if not date_str:
             continue
-        # 找同日期同時段的 open
         open_file = os.path.join(OUTPUT_DIR, f"momo_{date_str}_{slot}_open.csv")
-        if os.path.exists(open_file):
-            return open_file, close_file
+        mid_file  = os.path.join(OUTPUT_DIR, f"momo_{date_str}_{slot}_mid.csv")
+        if os.path.exists(open_file) and os.path.exists(mid_file):
+            return open_file, mid_file, close_file
 
-    return None, None
+    return None, None, None
 
 
-def compare(open_file: str, close_file: str) -> list:
+def compare(open_file: str, mid_file: str, close_file: str) -> list:
     snap_open  = load_snapshot(open_file)
+    snap_mid   = load_snapshot(mid_file)
     snap_close = load_snapshot(close_file)
     results    = []
 
     for icode, s in snap_open.items():
         qty_start = int(s["qty"]) if s.get("qty") else None
 
+        mid_raw = snap_mid.get(icode, {}).get("qty", "")
+        qty_mid = int(mid_raw) if mid_raw and str(mid_raw).strip() else None
+
         if icode in snap_close:
-            qty_raw  = snap_close[icode].get("qty","")
+            qty_raw  = snap_close[icode].get("qty", "")
             qty_end  = int(qty_raw) if qty_raw and qty_raw.strip() else 0
             sold_out = (qty_end == 0)
         else:
@@ -91,11 +99,12 @@ def compare(open_file: str, close_file: str) -> list:
 
         results.append({
             "icode":     icode,
-            "brand":     s.get("brand",""),
-            "name":      s.get("name",""),
-            "discount":  s.get("discount",""),
-            "price":     s.get("price",""),
+            "brand":     s.get("brand", ""),
+            "name":      s.get("name", ""),
+            "discount":  s.get("discount", ""),
+            "price":     s.get("price", ""),
             "qty_open":  qty_start,
+            "mid_qty":   qty_mid,
             "qty_close": qty_end,
             "sold":      sold,
             "sold_out":  "是" if sold_out else "否",
@@ -140,6 +149,7 @@ def append_to_all_results(results: list, date_str: str, slot_str: str):
                 "discount":  r["discount"],
                 "price":     r["price"],
                 "qty_open":  r["qty_open"],
+                "mid_qty":   r["mid_qty"],
                 "qty_close": r["qty_close"],
                 "sold":      r["sold"],
                 "sold_out":  r["sold_out"],
@@ -150,29 +160,30 @@ def append_to_all_results(results: list, date_str: str, slot_str: str):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 3:
-        open_file, close_file = sys.argv[1], sys.argv[2]
+    if len(sys.argv) == 4:
+        open_file, mid_file, close_file = sys.argv[1], sys.argv[2], sys.argv[3]
     else:
-        open_file, close_file = find_latest_pair()
+        open_file, mid_file, close_file = find_latest_trio()
         if not open_file:
-            print("❌ 找不到同日期同時段的 open + close 配對")
+            print("❌ 找不到同日期同時段的 open + mid + close 三檔配對")
             sys.exit(1)
-        print(f"自動配對：\n  開檔：{open_file}\n  結束前：{close_file}")
+        print(f"自動配對：\n  開檔：{open_file}\n  中段：{mid_file}\n  結束前：{close_file}")
 
-    date_str, slot_code = parse_file_info(open_file)
+    date_str, slot_code, _ = parse_file_info(open_file)
     slot_label = SLOT_LABELS.get(slot_code, slot_code)
     display_date = f"{date_str[:4]}/{date_str[4:6]}/{date_str[6:]}"
 
-    results = compare(open_file, close_file)
+    results = compare(open_file, mid_file, close_file)
     append_to_all_results(results, display_date, slot_label)
 
     # 印出摘要
     sold_any = [r for r in results if r["sold"] and r["sold"] > 0]
     sold_out = [r for r in results if r["sold_out"] == "是"]
-    print(f"\n{'商品名稱':<22} {'折扣':>5} {'開檔':>6} {'結束':>6} {'售出':>6} {'售出率':>7} {'售完':>5}")
-    print("─" * 60)
+    print(f"\n{'商品名稱':<22} {'折扣':>5} {'開檔':>6} {'中段':>6} {'結束':>6} {'售出':>6} {'售出率':>7} {'售完':>5}")
+    print("─" * 68)
     for r in results:
         print(f"{r['name'][:20]:<22} {r['discount']:>5} "
-              f"{str(r['qty_open']):>6} {str(r['qty_close']):>6} "
+              f"{str(r['qty_open']):>6} {str(r['mid_qty'] if r['mid_qty'] is not None else '-'):>6} "
+              f"{str(r['qty_close']):>6} "
               f"{str(r['sold'] or '-'):>6} {str(r['sell_rate'])+'%':>7} {r['sold_out']:>5}")
     print(f"\n總商品：{len(results)} ｜ 有銷售：{len(sold_any)} ｜ 售完：{len(sold_out)}")
