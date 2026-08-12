@@ -168,7 +168,7 @@ tbody td{padding:9px 14px;vertical-align:middle;}
     <div class="card">
       <div class="card-header">
         <div class="card-title"><div class="card-dot" style="background:var(--momo)"></div>商品成效明細</div>
-        <div class="sort-note">依售出量排序</div>
+        <div class="sort-note">依售出量排序 ・ <span style="color:var(--red)">紅字🔁</span> = 過去3日內重複上架</div>
       </div>
       <div style="overflow-x:auto">
         <table>
@@ -280,11 +280,36 @@ function getFilteredData() {
   });
 }
 
+function getPrevDateStrings(dateStr, n) {
+  const parts = dateStr.split('/').map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) return [];
+  const base = new Date(parts[0], parts[1]-1, parts[2]);
+  const arr = [];
+  for (let i = 1; i <= n; i++) {
+    const dt = new Date(base);
+    dt.setDate(dt.getDate() - i);
+    const yy = dt.getFullYear();
+    const mm = String(dt.getMonth()+1).padStart(2,'0');
+    const dd = String(dt.getDate()).padStart(2,'0');
+    arr.push(`${yy}/${mm}/${dd}`);
+  }
+  return arr;
+}
+
+function getDuplicateIcodeSet(dateVal) {
+  const prevDates = getPrevDateStrings(dateVal, 3);
+  const iSet = new Set();
+  allData.forEach(r => { if (prevDates.includes(r.date)) iSet.add(r.icode); });
+  return iSet;
+}
+
 function renderAll() {
   const data = getFilteredData();
+  const dateVal = document.getElementById('queryDate').value.replace(/-/g, '/');
+  const dupSet = getDuplicateIcodeSet(dateVal);
   renderStats(data);
   renderSlotBar();
-  renderTable(data);
+  renderTable(data, dupSet);
   renderDist(data);
   renderSummary(data);
 }
@@ -332,7 +357,8 @@ function slotTagClass(slot) {
   return map[slot] || 'tag-0700';
 }
 
-function renderTable(data) {
+function renderTable(data, dupSet) {
+  dupSet = dupSet || new Set();
   const sorted = [...data].sort((a,b) => (parseInt(b.sold)||0)-(parseInt(a.sold)||0));
   const rows = sorted.map((r, i) => {
     const sold = parseInt(r.sold) || 0;
@@ -341,9 +367,11 @@ function renderTable(data) {
     const barColor = rate >= 30 ? 'var(--red)' : rate >= 10 ? 'var(--orange)' : rate > 0 ? 'var(--blue)' : 'var(--border2)';
     const barW = Math.min(rate, 100);
     const midDisplay = (r.mid_qty !== undefined && r.mid_qty !== '') ? r.mid_qty : '-';
+    const isDup = dupSet.has(r.icode);
+    const nameStyle = isDup ? 'style="color:var(--red)"' : '';
     return `<tr>
       <td style="color:var(--text-dim);font-family:'DM Mono',monospace;font-size:11px">${i+1}</td>
-      <td><div class="prod-name">${r.name}</div><div class="prod-brand">${r.brand}</div></td>
+      <td><div class="prod-name" ${nameStyle}>${r.name}${isDup?' 🔁':''}</div><div class="prod-brand">${r.brand}</div></td>
       <td><span class="slot-tag ${slotTagClass(r.slot)}">${r.slot}</span></td>
       <td><span class="disc-badge">${r.discount}</span></td>
       <td style="font-family:'DM Mono',monospace">$${r.price}</td>
