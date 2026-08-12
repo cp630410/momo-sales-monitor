@@ -46,7 +46,7 @@ body{background:var(--bg);color:var(--text);font-family:'Noto Sans TC',sans-seri
 .last-update{font-size:11px;color:var(--text-dim);}
 
 /* 統計卡 */
-.stat-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px;}
+.stat-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:16px;}
 .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow);}
 .sc-row{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;}
 .sc-label{font-size:11px;color:var(--text-dim);}
@@ -296,12 +296,15 @@ function renderStats(data) {
   const maxSold  = data.reduce((m, r) => Math.max(m, parseInt(r.sold)||0), 0);
   const maxItem  = data.find(r => (parseInt(r.sold)||0) === maxSold);
   const avgRate  = data.length ? (data.reduce((s,r)=>s+(parseFloat(r.sell_rate)||0),0)/data.length).toFixed(1) : 0;
+  const revenue  = data.reduce((s,r) => s + ((parseFloat(r.price)||0) * (parseInt(r.sold)||0)), 0);
+  const revenueFmt = '$' + Math.round(revenue).toLocaleString('zh-TW');
 
   document.getElementById('statCards').innerHTML = `
+    <div class="stat-card"><div class="sc-row"><div class="sc-label">檔期總營收</div><div class="sc-ico">💰</div></div><div class="sc-val" style="color:var(--momo)">${revenueFmt}</div><div class="sc-note">${curSlot==='all'?'全時段':'僅 '+curSlot+' 檔'}</div></div>
+    <div class="stat-card"><div class="sc-row"><div class="sc-label">最高售出量</div><div class="sc-ico">🏆</div></div><div class="sc-val" style="color:var(--orange)">${maxSold}</div><div class="sc-note">${maxItem?maxItem.name.slice(0,12):'—'}</div></div>
     <div class="stat-card"><div class="sc-row"><div class="sc-label">查詢商品數</div><div class="sc-ico">🛒</div></div><div class="sc-val" style="color:var(--blue)">${total}</div><div class="sc-note">${curSlot==='all'?'全時段':'僅 '+curSlot+' 檔'}</div></div>
     <div class="stat-card"><div class="sc-row"><div class="sc-label">有銷售商品</div><div class="sc-ico">✅</div></div><div class="sc-val" style="color:var(--green)">${hasSales}</div><div class="sc-note">${total?((hasSales/total*100).toFixed(0))+'% 商品有賣出':'-'}</div></div>
     <div class="stat-card"><div class="sc-row"><div class="sc-label">售完下架</div><div class="sc-ico">🔥</div></div><div class="sc-val" style="color:var(--red)">${soldOut}</div><div class="sc-note">100% 售出率</div></div>
-    <div class="stat-card"><div class="sc-row"><div class="sc-label">最高售出量</div><div class="sc-ico">🏆</div></div><div class="sc-val" style="color:var(--orange)">${maxSold}</div><div class="sc-note">${maxItem?maxItem.name.slice(0,12):'—'}</div></div>
     <div class="stat-card"><div class="sc-row"><div class="sc-label">平均售出率</div><div class="sc-ico">📊</div></div><div class="sc-val" style="color:var(--text-mid)">${avgRate}%</div><div class="sc-note">全部商品平均</div></div>
   `;
 }
