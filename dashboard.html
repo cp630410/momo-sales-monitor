@@ -108,6 +108,18 @@ tbody td{padding:9px 14px;vertical-align:middle;}
 .sum-lbl{color:var(--text-mid);}
 .sum-val{font-family:'DM Mono',monospace;font-weight:700;}
 
+/* 歷史比較彈窗 */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:1000;}
+.modal-box{background:var(--surface);border-radius:var(--radius);max-width:640px;width:92%;max-height:80vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25);}
+.modal-header{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);}
+.modal-title{font-size:14px;font-weight:700;}
+.modal-close{background:none;border:none;font-size:16px;cursor:pointer;color:var(--text-dim);}
+.modal-close:hover{color:var(--text);}
+.modal-body{padding:14px 18px;}
+.modal-body table{width:100%;border-collapse:collapse;font-size:12px;}
+.modal-body th{text-align:left;padding:6px 8px;color:var(--text-dim);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border);}
+.modal-body td{padding:6px 8px;border-bottom:1px solid var(--border);}
+
 /* 載入狀態 */
 .loading{text-align:center;padding:60px;color:var(--text-dim);}
 .loading-spin{font-size:32px;animation:spin 1s linear infinite;display:inline-block;margin-bottom:12px;}
@@ -196,6 +208,16 @@ tbody td{padding:9px 14px;vertical-align:middle;}
       </div>
     </div>
 
+  </div>
+</div>
+
+<div id="historyModalOverlay" class="modal-overlay" onclick="closeHistoryModal(event)">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div id="modalTitle" class="modal-title"></div>
+      <button class="modal-close" onclick="closeHistoryModal()">✕</button>
+    </div>
+    <div id="modalBody" class="modal-body"></div>
   </div>
 </div>
 
@@ -303,6 +325,37 @@ function getDuplicateIcodeSet(dateVal) {
   return iSet;
 }
 
+function showHistoryModal(icode) {
+  const dateVal = document.getElementById('queryDate').value.replace(/-/g, '/');
+  const rangeDates = [dateVal, ...getPrevDateStrings(dateVal, 3)];
+  const rows = allData.filter(r => r.icode === icode && rangeDates.includes(r.date));
+  rows.sort((a,b) => {
+    if (a.date !== b.date) return b.date.localeCompare(a.date);
+    return a.slot.localeCompare(b.slot);
+  });
+  if (rows.length === 0) return;
+
+  document.getElementById('modalTitle').textContent = `${rows[0].name}（${rows[0].brand}）`;
+  const trs = rows.map(r => {
+    const mid = (r.mid_qty !== undefined && r.mid_qty !== '') ? r.mid_qty : '-';
+    return `<tr>
+      <td>${r.date}</td><td>${r.slot}</td><td>${r.discount}</td><td>$${r.price}</td>
+      <td>${r.qty_open}</td><td>${mid}</td><td>${r.qty_close}</td>
+      <td>${r.sold||'-'}</td><td>${r.sell_rate}%</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('modalBody').innerHTML = `
+    <table>
+      <thead><tr><th>日期</th><th>時段</th><th>折扣</th><th>活動價</th><th>開檔</th><th>中段</th><th>結束前</th><th>售出</th><th>售出率</th></tr></thead>
+      <tbody>${trs}</tbody>
+    </table>`;
+  document.getElementById('historyModalOverlay').style.display = 'flex';
+}
+
+function closeHistoryModal(e) {
+  document.getElementById('historyModalOverlay').style.display = 'none';
+}
+  
 function renderAll() {
   const data = getFilteredData();
   const dateVal = document.getElementById('queryDate').value.replace(/-/g, '/');
@@ -367,11 +420,13 @@ function renderTable(data, dupSet) {
     const barColor = rate >= 30 ? 'var(--red)' : rate >= 10 ? 'var(--orange)' : rate > 0 ? 'var(--blue)' : 'var(--border2)';
     const barW = Math.min(rate, 100);
     const midDisplay = (r.mid_qty !== undefined && r.mid_qty !== '') ? r.mid_qty : '-';
-    const isDup = dupSet.has(r.icode);
-    const nameStyle = isDup ? 'style="color:var(--red)"' : '';
+const isDup = dupSet.has(r.icode);
+    const nameStyle = isDup ? 'style="color:var(--red);cursor:pointer;text-decoration:underline dotted;"' : '';
+    const nameOnClick = isDup ? `onclick="showHistoryModal('${r.icode}')"` : '';
+    const nameTitle = isDup ? 'title="點擊查看近3日上架紀錄"' : '';
     return `<tr>
       <td style="color:var(--text-dim);font-family:'DM Mono',monospace;font-size:11px">${i+1}</td>
-      <td><div class="prod-name" ${nameStyle}>${r.name}${isDup?' 🔁':''}</div><div class="prod-brand">${r.brand}</div></td>
+      <td><div class="prod-name" ${nameStyle} ${nameOnClick} ${nameTitle}>${r.name}${isDup?' 🔁':''}</div><div class="prod-brand">${r.brand}</div></td>
       <td><span class="slot-tag ${slotTagClass(r.slot)}">${r.slot}</span></td>
       <td><span class="disc-badge">${r.discount}</span></td>
       <td style="font-family:'DM Mono',monospace">$${r.price}</td>
